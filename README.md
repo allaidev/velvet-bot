@@ -1,133 +1,141 @@
-# gatekeeper-bot
+# Velvet
 
-Telegram-бот, который продаёт платный доступ в закрытый канал. Оплата принимается через
-[CryptoBot (Crypto Pay API)](https://help.crypt.bot/crypto-pay-api) в **USDT** и **TON**.
-Подписки продлеваются автоматически, по истечении срока бот сам кикает пользователя
-из канала.
+A Telegram bot that sells paid access to a private channel. Payments are handled via
+[CryptoBot (Crypto Pay API)](https://help.crypt.bot/crypto-pay-api) in **USDT** and **TON**.
+Subscriptions are managed automatically — when a subscription expires, the bot removes
+the user from the channel on its own.
 
-## Возможности
+## Features
 
-- 📲 Меню `/start` с приветственной картинкой и инлайн-кнопками: «Купить подписку»,
-  «INFO», «Поддержка», «Моя подписка».
-- 💳 Оплата через CryptoBot двумя способами: прямой инвойс или mini-app —
-  ссылки на оба варианта подставляются автоматически.
-- 🧾 Гибкие тарифы (срок, цена, название) задаются JSON-конфигом в `.env`.
-- 🔐 Одноразовые инвайт-ссылки (`member_limit = 1`) на каждую новую подписку —
-  ссылка не «утечёт» в чужой чат.
-- ⏰ Шедулер: уведомления за **3 дня** и за **сутки** до окончания (значения настраиваются),
-  автоматический кик после истечения подписки.
-- 🛡 Защита от абуза: глобальный антифлуд + лимит покупок в минуту, HMAC-проверка
-  подписи вебхука Crypto Pay, идемпотентная активация платежей.
-- 📊 Админ-панель `/admin`: количество пользователей, активных подписок и оплат, выручка
-  по валютам, разбивка по тарифам, последние подписки.
-- 💰 **Цены меняются прямо из админки** — без редеплоя и без правок `.env`.
-  Сохранённые подписки и уже выставленные счета сохраняют старую цену.
-- 🐳 Docker, Docker Compose, Alembic-миграции и юнит-тесты в комплекте.
+- 📲 `/start` menu with a welcome image and inline buttons: Get Access, How It Works, Support, My Subscription.
+- 💳 Two payment methods via CryptoBot: direct invoice or mini-app — both links are generated automatically.
+- 🧾 Flexible plans (duration, price, title) configured via JSON in `.env`.
+- 🔐 One-time invite links (`member_limit = 1`) for each new subscription — the link can't be shared or reused.
+- ⏰ Scheduler: renewal reminders **3 days** and **1 day** before expiry (configurable), automatic kick after expiry.
+- 🛡 Abuse protection: global anti-flood + per-minute purchase limit, HMAC webhook signature verification, idempotent payment activation.
+- 📊 Admin panel `/admin`: user count, active subscriptions, total payments, revenue by currency, per-plan breakdown, recent subscriptions.
+- 💰 **Prices can be changed directly from the admin panel** — no redeploy, no `.env` edits. Existing subscriptions and invoices keep their original price.
+- 🐳 Docker, Docker Compose, Alembic migrations, and unit tests included.
 
-## Содержание
+## Table of Contents
 
-- [Быстрый старт](#быстрый-старт)
-- [Создание и настройка ботов](#создание-и-настройка-ботов)
-- [Конфигурация](#конфигурация)
-- [Запуск](#запуск)
-- [Вебхук Crypto Pay](#вебхук-crypto-pay)
-- [Архитектура](#архитектура)
-- [Команды бота](#команды-бота)
-- [База данных и миграции](#база-данных-и-миграции)
-- [Тестирование и стиль](#тестирование-и-стиль)
-- [Деплой](#деплой) — кратко; подробный гайд в [DEPLOY.md](DEPLOY.md)
-- [FAQ и траблшутинг](#faq-и-траблшутинг)
-- [Лицензия](#лицензия)
+- [Quick Start](#quick-start)
+- [Creating and Configuring Bots](#creating-and-configuring-bots)
+- [Configuration](#configuration)
+- [Running](#running)
+- [Crypto Pay Webhook](#crypto-pay-webhook)
+- [Architecture](#architecture)
+- [Bot Commands](#bot-commands)
+- [Database and Migrations](#database-and-migrations)
+- [Testing and Code Style](#testing-and-code-style)
+- [Deployment](#deployment) — summary; full guide in [DEPLOY.md](DEPLOY.md)
+- [FAQ and Troubleshooting](#faq-and-troubleshooting)
+- [License](#license)
 
 ---
 
-## Быстрый старт
+## Quick Start
 
-```bash
-git clone https://github.com/your-org/gatekeeper-bot.git
-cd gatekeeper-bot
+```powershell
+# Windows PowerShell
+git clone https://github.com/your-org/velvet-bot.git
+cd velvet-bot
 
-cp .env.example .env
-$EDITOR .env   # заполни токены и параметры
+Copy-Item .env.example .env
+notepad .env   # fill in your tokens and settings
 
 python -m venv .venv
-source .venv/bin/activate            # Windows: .\.venv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
 alembic upgrade head
 python -m bot
 ```
 
-Через несколько секунд бот ответит на `/start` в Telegram.
+```bash
+# Linux / macOS
+git clone https://github.com/your-org/velvet-bot.git
+cd velvet-bot
 
-## Создание и настройка ботов
+cp .env.example .env
+nano .env   # fill in your tokens and settings
 
-1. **Бот Telegram** — у [@BotFather](https://t.me/BotFather) выполни `/newbot`,
-   получи `BOT_TOKEN`.
-2. **Канал** — создай приватный канал, добавь бота администратором с правом
-   «Добавлять подписчиков по ссылке-приглашению». Узнай числовой `chat_id`
-   (например, переслав пост из канала в [@userinfobot](https://t.me/userinfobot)).
-3. **CryptoBot** — открой [@CryptoBot](https://t.me/CryptoBot), перейди
-   `Crypto Pay → My Apps → Create App`. Получи API-токен и положи в
-   `CRYPTO_PAY_TOKEN`. Для тестов используй `https://testnet-pay.crypt.bot`
-   и [@CryptoTestnetBot](https://t.me/CryptoTestnetBot).
-4. **Админы** — узнай свой `user_id` у [@userinfobot](https://t.me/userinfobot)
-   и положи в `ADMIN_IDS` (через запятую).
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
 
-## Конфигурация
-
-Все параметры читаются из переменных окружения (или `.env`). Полный пример
-с комментариями — в [`.env.example`](.env.example).
-
-| Переменная | Описание |
-|---|---|
-| `BOT_TOKEN` | Токен Telegram-бота от @BotFather |
-| `CHANNEL_ID` | Числовой ID закрытого канала (отрицательный) |
-| `ADMIN_IDS` | ID администраторов через запятую |
-| `CRYPTO_PAY_TOKEN` | Токен Crypto Pay |
-| `CRYPTO_PAY_BASE_URL` | `https://pay.crypt.bot` (mainnet) или `https://testnet-pay.crypt.bot` |
-| `CRYPTO_PAY_ASSETS` | Валюты для оплаты, через запятую (`USDT,TON`) |
-| `SUBSCRIPTION_PLANS` | JSON-массив тарифов (см. ниже) |
-| `REMINDER_DAYS` | За сколько дней напоминать о продлении (по умолчанию `3,1`) |
-| `WEBHOOK_ENABLED` | `true`, если запускаешь HTTP-вебхук Crypto Pay |
-| `WEBHOOK_HOST` / `WEBHOOK_PORT` / `WEBHOOK_PATH` | Параметры вебхук-сервера |
-| `POLL_INTERVAL_SECONDS` | Период поллинга счетов, если вебхук выключен |
-| `WELCOME_IMAGE` | Путь к приветственной картинке (или пусто) |
-| `SUPPORT_URL` / `INFO_URL` | Ссылки для соответствующих кнопок (опционально) |
-| `DATABASE_URL` | `sqlite+aiosqlite:///data/bot.sqlite3` или `postgresql+asyncpg://...` |
-| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
-| `THROTTLE_BUY_PER_MINUTE` | Лимит покупок в минуту на пользователя |
-
-### Тарифы
-
-```json
-[
-  {"id": "1m",  "title": "1 месяц",   "days": 30,  "price": "5.00"},
-  {"id": "3m",  "title": "3 месяца",  "days": 90,  "price": "13.00"},
-  {"id": "6m",  "title": "6 месяцев", "days": 180, "price": "24.00"},
-  {"id": "12m", "title": "12 месяцев","days": 365, "price": "42.00"}
-]
+alembic upgrade head
+python -m bot
 ```
 
-- `id` уникален и стабилен — он сохраняется в каждой оплате, не меняй у
-  существующих тарифов.
-- `price` — номинальная сумма в выбранной пользователем валюте. По умолчанию
-  одно и то же число используется и для USDT, и для TON. Если хочешь
-  отдельную цену для TON, перепиши `SubscriptionService._amount_for`.
-- `days` добавляются к текущему сроку, если подписка ещё активна (продление
-  не «сжигает» оставшиеся дни).
+Within a few seconds the bot will respond to `/start` in Telegram.
 
-### Тексты и брендинг
+## Creating and Configuring Bots
 
-Все строки находятся в `src/bot/texts.py` — меняй прямо там, никаких .po
-файлов не нужно. Картинку приветствия положи в `assets/welcome.jpg` и
-пропиши путь в `WELCOME_IMAGE`.
+1. **Telegram bot** — open [@BotFather](https://t.me/BotFather), run `/newbot`, get your `BOT_TOKEN`.
+2. **Channel** — create a private channel, add the bot as an administrator with the
+   **"Invite users via link"** permission. Find the numeric `chat_id` by forwarding
+   any post from the channel to [@userinfobot](https://t.me/userinfobot).
+3. **CryptoBot** — open [@CryptoBot](https://t.me/CryptoBot), go to
+   `Crypto Pay → My Apps → Create App`. Copy the API token into `CRYPTO_PAY_TOKEN`.
+   For testing use `https://testnet-pay.crypt.bot` and [@CryptoTestnetBot](https://t.me/CryptoTestnetBot).
+4. **Admins** — find your `user_id` via [@userinfobot](https://t.me/userinfobot)
+   and put it in `ADMIN_IDS` (comma-separated for multiple admins).
 
-## Запуск
+## Configuration
 
-### Локально
+All settings are read from environment variables or `.env`. A fully commented example
+is in [`.env.example`](.env.example).
+
+| Variable | Description |
+|---|---|
+| `BOT_TOKEN` | Telegram bot token from @BotFather |
+| `CHANNEL_ID` | Numeric ID of the private channel (negative number) |
+| `ADMIN_IDS` | Admin user IDs, comma-separated |
+| `CRYPTO_PAY_TOKEN` | Crypto Pay API token |
+| `CRYPTO_PAY_BASE_URL` | `https://pay.crypt.bot` (mainnet) or `https://testnet-pay.crypt.bot` |
+| `CRYPTO_PAY_ASSETS` | Payment currencies, comma-separated (`USDT,TON`) |
+| `SUBSCRIPTION_PLANS` | JSON array of plans (see below) — must be on one line |
+| `REMINDER_DAYS` | Days before expiry to send reminders (default `3,1`) |
+| `WEBHOOK_ENABLED` | `true` to enable the Crypto Pay HTTP webhook |
+| `WEBHOOK_HOST` / `WEBHOOK_PORT` / `WEBHOOK_PATH` | Webhook server settings |
+| `POLL_INTERVAL_SECONDS` | Invoice polling interval when webhook is disabled |
+| `WELCOME_IMAGE` | Path to the welcome image (or leave empty) |
+| `SUPPORT_URL` / `INFO_URL` | URLs for the corresponding menu buttons (optional) |
+| `DATABASE_URL` | `sqlite+aiosqlite:///data/bot.sqlite3` or `postgresql+asyncpg://...` |
+| `LOG_LEVEL` | `DEBUG` / `INFO` / `WARNING` / `ERROR` |
+| `THROTTLE_BUY_PER_MINUTE` | Max purchase attempts per minute per user |
+
+### Subscription Plans
+
+Must be written as a single line in `.env` (no line breaks):
+
+```
+SUBSCRIPTION_PLANS=[{"id":"1m","title":"1 Month","days":30,"price":"5.00"},{"id":"3m","title":"3 Months","days":90,"price":"13.00"},{"id":"6m","title":"6 Months","days":180,"price":"24.00"},{"id":"12m","title":"12 Months","days":365,"price":"42.00"}]
+```
+
+- `id` must be unique and stable — it is stored with every payment record. Don't change it for existing plans.
+- `price` is the nominal amount in the currency chosen by the user. By default the same number is used for both USDT and TON. To set separate prices per currency, override `SubscriptionService._amount_for`.
+- `days` are added on top of the current expiry if the subscription is still active — renewing early doesn't burn remaining days.
+
+### Texts and Branding
+
+All user-facing strings live in `src/bot/texts.py` — edit them directly, no `.po` files needed.
+Put your welcome image at `assets/welcome.jpg` and set the path in `WELCOME_IMAGE`.
+
+## Running
+
+### Locally
+
+```powershell
+# Windows
+pip install -e ".[dev]"
+alembic upgrade head
+python -m bot
+```
 
 ```bash
+# Linux / macOS
 pip install -e ".[dev]"
 alembic upgrade head
 python -m bot
@@ -137,155 +145,146 @@ python -m bot
 
 ```bash
 cp .env.example .env
-# впиши секреты, при необходимости — WEBHOOK_*
+# fill in secrets, configure WEBHOOK_* if needed
 docker compose up -d --build
 docker compose logs -f
 ```
 
-Том `./data` маппится в контейнер — там лежит SQLite-база и
-другие persisted данные.
+The `./data` volume is mapped into the container — this is where the SQLite database and other persisted data live.
 
-## Вебхук Crypto Pay
+## Crypto Pay Webhook
 
-В проде рекомендуем включить вебхук — это быстрее и дешевле, чем поллинг.
+Webhooks are recommended in production — faster and more efficient than polling.
 
-1. Подними бот за HTTPS-прокси (Caddy, nginx, Cloudflare Tunnel).
-2. Установи в `.env`:
+1. Put the bot behind an HTTPS reverse proxy (Caddy, nginx, Cloudflare Tunnel).
+2. Set in `.env`:
    ```env
    WEBHOOK_ENABLED=true
    WEBHOOK_HOST=0.0.0.0
    WEBHOOK_PORT=8080
    WEBHOOK_PATH=/cryptopay
    ```
-3. В @CryptoBot → Crypto Pay → My Apps → Edit App укажи Webhook URL:
-   `https://your-domain.tld/cryptopay`. Включи событие `invoice_paid`.
+3. In @CryptoBot → Crypto Pay → My Apps → Edit App, set the Webhook URL to
+   `https://your-domain.tld/cryptopay`. Enable the `invoice_paid` event.
 
-Если вебхук недоступен, бот всё равно работает: фоновое задание раз в
-`POLL_INTERVAL_SECONDS` подтягивает статусы счетов через `getInvoices`.
+If the webhook is unavailable, the bot still works: a background job polls invoice statuses every `POLL_INTERVAL_SECONDS` seconds via `getInvoices`.
 
-Подпись каждого запроса проверяется через HMAC-SHA256 от SHA-256-хэша
-твоего токена. Эндпоинт отвечает `401`, если подпись не сходится, —
-никакие данные при этом не обрабатываются.
+Each webhook request is verified via HMAC-SHA256 of the SHA-256 hash of your token. The endpoint returns `401` if the signature doesn't match — no data is processed.
 
-## Архитектура
+## Architecture
 
 ```
 src/bot/
 ├── app.py              — bootstrapping: Dispatcher, scheduler, webhook
-├── config.py           — pydantic-settings, тарифы, валидация
-├── texts.py            — все пользовательские строки
+├── config.py           — pydantic-settings, plans, validation
+├── texts.py            — all user-facing strings
 ├── logger.py           — structlog
-├── database/           — SQLAlchemy 2 async, репозитории, сессии
+├── database/           — SQLAlchemy 2 async, repositories, sessions
 ├── handlers/           — start, subscription, payment, admin, errors
-├── keyboards/          — инлайн-клавиатуры + типизированные CallbackData
+├── keyboards/          — inline keyboards + typed CallbackData
 ├── middlewares/        — throttling, DB session injection
 ├── filters/            — admin filter
 ├── services/
-│   ├── cryptobot.py    — клиент Crypto Pay + проверка подписи
-│   ├── channel.py      — инвайт-ссылки и кик из канала
-│   └── subscription.py — бизнес-логика покупки/активации/продления
-├── scheduler/          — APScheduler: напоминания, кик, поллинг счетов
-└── web/                — aiohttp endpoint для вебхука Crypto Pay
+│   ├── cryptobot.py    — Crypto Pay client + signature verification
+│   ├── channel.py      — invite links and channel kick
+│   └── subscription.py — purchase / activation / renewal business logic
+├── scheduler/          — APScheduler: reminders, kick, invoice polling
+└── web/                — aiohttp endpoint for Crypto Pay webhook
 ```
 
-Поток покупки:
+Purchase flow:
 
 ```
-user → /start → «Купить» → тариф → валюта
-                                  ↓
+user → /start → "Get Access" → plan → currency
+                                      ↓
                   CryptoPay.create_invoice  → invoice_id + pay_url + mini_app_url
-                                  ↓
+                                      ↓
                        Payment(status=pending)
-                                  ↓
-          ┌──────── webhook ────────┐    ┌──── ручная кнопка «Проверить»
+                                      ↓
+          ┌──────── webhook ────────┐    ┌──── manual "Check Payment" button
           ↓                         ↓    ↓
         invoice_paid              poll job
-                                  ↓
+                                      ↓
              SubscriptionService.activate_paid_invoice
-                                  ↓
+                                      ↓
               Subscription(expires_at = now + plan.days)
-                                  ↓
-               одноразовая invite-link → пользователю
+                                      ↓
+               one-time invite link → user
 ```
 
-## Команды бота
+## Bot Commands
 
-| Команда   | Кто видит | Что делает |
-|-----------|-----------|------------|
-| `/start`  | все       | Приветствие, картинка, главное меню |
-| `/admin`  | админы    | Статистика, разбивки, последние подписки, **редактирование цен** |
+| Command   | Who sees it | What it does |
+|-----------|-------------|--------------|
+| `/start`  | everyone    | Welcome screen, image, main menu |
+| `/admin`  | admins only | Stats, breakdowns, recent subscriptions, **live price editing** |
 
-Остальное — через инлайн-кнопки.
+Everything else is handled via inline buttons.
 
-## База данных и миграции
+## Database and Migrations
 
-По умолчанию используется SQLite — файл `data/bot.sqlite3`. Для прода
-рекомендуется PostgreSQL:
+SQLite is used by default — the file is at `data/bot.sqlite3`. PostgreSQL is recommended for production:
 
 ```env
-DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/gatekeeper
+DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/velvet
 ```
 
-Применить миграции:
+Apply migrations:
 
 ```bash
 alembic upgrade head
 ```
 
-Создать новую ревизию после правки моделей:
+Create a new revision after editing models:
 
 ```bash
 alembic revision --autogenerate -m "add column foo"
 alembic upgrade head
 ```
 
-При первом запуске бот сам создаёт таблицы, если их нет
-(`Base.metadata.create_all`). В проде лучше явно гонять `alembic upgrade head`
-и убрать `create_tables=True` из `app.py`, если хочешь жёсткий контроль схемы.
+On first run, the bot creates tables automatically if they don't exist (`Base.metadata.create_all`). In production it's better to run `alembic upgrade head` explicitly and remove `create_tables=True` from `app.py` if you want strict schema control.
 
-## Тестирование и стиль
+## Testing and Code Style
 
 ```bash
-make dev         # установить с extras
-make test        # pytest + покрытие
+make dev         # install with dev extras
+make test        # pytest + coverage
 make lint        # ruff + mypy
-make format      # автоформат + автофикс
+make format      # auto-format + auto-fix
 ```
 
-Покрыты юнит-тестами:
+Unit tests cover:
 
-- загрузка и валидация настроек (плюс защита от дубликатов плана),
-- репозитории (создание / продление / истечение подписки, агрегаты по оплатам),
-- сервис подписок (идемпотентность активации, расширение, реконсиляция expired),
-- HMAC-подпись вебхука Crypto Pay,
-- ThrottlingMiddleware (антифлуд, квота покупок, обход для админов).
+- Settings loading and validation (including duplicate plan ID protection)
+- Repositories (create / extend / expire subscription, payment aggregates)
+- Subscription service (idempotent activation, extension, expired reconciliation)
+- Crypto Pay webhook HMAC signature
+- ThrottlingMiddleware (anti-flood, purchase quota, admin bypass)
 
-### Изменение цен на лету
+### Live Price Editing
 
-Открой `/admin` → «💰 Цены» → выбери тариф → отправь сообщением новое число
-(`7.50`, `12`, `0.5` — точку или запятую, без знака валюты). Если хочется
-вернуть значение из `.env`, нажми «↩️ Сбросить к дефолту». Бот хранит
-переопределение в таблице `price_overrides`; уже оплаченные подписки и
-активные счета сохраняют сумму, по которой их купили.
+Open `/admin` → **💰 Pricing** → select a plan → send the new price as a message
+(`7.50`, `12`, `0.5` — dot or comma, no currency symbol). To revert to the `.env` value,
+tap **↩️ Reset to Default**. Overrides are stored in the `price_overrides` table;
+already-paid subscriptions and active invoices keep their original amount.
 
-## Деплой
+## Deployment
 
-> Полный гайд (DNS, HTTPS, systemd, Docker, бэкапы, обновление) —
-> в [DEPLOY.md](DEPLOY.md). Ниже — короткая выжимка.
+> Full guide (DNS, HTTPS, systemd, Docker, backups, updates) is in [DEPLOY.md](DEPLOY.md). Quick summary below.
 
 ### systemd
 
 ```ini
-# /etc/systemd/system/gatekeeper-bot.service
+# /etc/systemd/system/velvet-bot.service
 [Unit]
-Description=Gatekeeper Telegram Bot
+Description=Velvet Telegram Bot
 After=network-online.target
 
 [Service]
 User=bot
-WorkingDirectory=/opt/gatekeeper-bot
-EnvironmentFile=/opt/gatekeeper-bot/.env
-ExecStart=/opt/gatekeeper-bot/.venv/bin/python -m bot
+WorkingDirectory=/opt/velvet-bot
+EnvironmentFile=/opt/velvet-bot/.env
+ExecStart=/opt/velvet-bot/.venv/bin/python -m bot
 Restart=always
 RestartSec=5
 
@@ -295,17 +294,16 @@ WantedBy=multi-user.target
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now gatekeeper-bot
+sudo systemctl enable --now velvet-bot
 ```
 
 ### Docker
 
-`docker compose up -d --build` — собрать и поднять. Том `./data` сохраняет
-SQLite-базу между перезапусками.
+`docker compose up -d --build` — build and start. The `./data` volume persists the SQLite database across restarts.
 
-### Обратный прокси для вебхука
+### Reverse Proxy for Webhook
 
-Минимальный фрагмент nginx:
+Minimal nginx fragment:
 
 ```nginx
 location /cryptopay {
@@ -315,32 +313,26 @@ location /cryptopay {
 }
 ```
 
-## FAQ и траблшутинг
+## FAQ and Troubleshooting
 
-**Бот не может выдать ссылку — пишет «не удалось создать ссылку».**
-Проверь, что бот — администратор канала с правом «Добавлять подписчиков по
-ссылке-приглашению» и что `CHANNEL_ID` правильный (отрицательный, формат
-`-100…`).
+**The bot can't generate an invite link.**
+Make sure the bot is a channel administrator with the **"Invite users via link"** permission,
+and that `CHANNEL_ID` is correct (negative number, format `-100…`).
 
-**Оплата прошла, но подписка не активируется.**
-Если вебхук выключен — подожди до `POLL_INTERVAL_SECONDS` секунд или
-нажми кнопку «Проверить оплату». Если используешь вебхук — посмотри логи
-на наличие `cryptobot.webhook.bad_signature` (значит, токены в боте и в
-CryptoBot не совпадают).
+**Payment went through but the subscription isn't activated.**
+If webhook is disabled — wait up to `POLL_INTERVAL_SECONDS` seconds or tap "Check Payment".
+If using a webhook — check the logs for `cryptobot.webhook.bad_signature`
+(means the token in the bot and in CryptoBot don't match).
 
-**Хочу разные цены для USDT и TON.**
-Перепиши `SubscriptionService._amount_for` в
-`src/bot/services/subscription.py` — это единственное место, где сумма
-конвертируется.
+**I want different prices for USDT and TON.**
+Override `SubscriptionService._amount_for` in `src/bot/services/subscription.py` — that's the only place where the amount is resolved per currency.
 
-**Можно ли поднять несколько ботов на один Crypto Pay аккаунт?**
-Да, но каждому нужен свой Crypto Pay App с отдельным токеном — вебхук
-привязывается к приложению.
+**Can I run multiple bots on one Crypto Pay account?**
+Yes, but each bot needs its own Crypto Pay App with a separate token — webhooks are bound to the app, not the account.
 
-**Где хранятся секреты в Docker?**
-Compose читает `.env` рядом. В Kubernetes используй `Secret`-ресурс и
-монтируй переменные окружения.
+**Where are secrets stored in Docker?**
+Compose reads `.env` from the project root. In Kubernetes, use a `Secret` resource and mount it as environment variables.
 
-## Лицензия
+## License
 
-MIT — см. [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
